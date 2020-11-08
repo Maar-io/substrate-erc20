@@ -117,7 +117,7 @@ mod raffle {
 
         /// We test a simple use case of our contract.
         #[test]
-        fn it_works() {
+        fn test_participate() {
             let accounts =
                 ink_env::test::default_accounts::<ink_env::DefaultEnvironment>()
                     .expect("Cannot get accounts");
@@ -126,8 +126,55 @@ mod raffle {
             assert_eq!(raffle.participate(accounts.bob, DEPOSIT_MIN + 1), Ok(()));
             assert_eq!(raffle.is_participating(accounts.bob), true);
 
+            // Expect one emitted event:
+            let emitted_events = ink_env::test::recorded_events().collect::<Vec<_>>();
+            assert_eq!(emitted_events.len(), 1);
+        }
+
+        /// A user can send in anywhere between 0.01 and 0.1 tokens.
+        #[test]
+        fn test_endowment() {
+            let accounts =
+                ink_env::test::default_accounts::<ink_env::DefaultEnvironment>()
+                    .expect("Cannot get accounts");
+            
+            let mut raffle = Raffle::new(accounts.alice);
+
             assert_eq!(raffle.participate(accounts.charlie, DEPOSIT_MIN - 1), Err(Error::EndowmentOutOfLimits));
             assert_eq!(raffle.is_participating(accounts.charlie), false);
+
+            assert_eq!(raffle.participate(accounts.charlie, DEPOSIT_MAX + 1), Err(Error::EndowmentOutOfLimits));
+            assert_eq!(raffle.is_participating(accounts.charlie), false);
+        }
+
+        /// 15 minute countdown only starts once there are at least 5 players in the pool.
+        #[test]
+        fn test_enable_draw() {
+            let accounts =
+                ink_env::test::default_accounts::<ink_env::DefaultEnvironment>()
+                    .expect("Cannot get accounts");
+            
+            let mut raffle = Raffle::new(accounts.alice);
+            assert_eq!(raffle.participate(accounts.bob, DEPOSIT_MIN + 1), Ok(()));
+            assert_eq!(raffle.participate(accounts.bob, DEPOSIT_MIN + 1), Ok(()));
+            assert_eq!(raffle.participate(accounts.bob, DEPOSIT_MIN + 1), Ok(()));
+            assert_eq!(raffle.participate(accounts.bob, DEPOSIT_MAX - 1), Ok(()));
+            assert_eq!(raffle.draw_allowed, false);
+            assert_eq!(raffle.participate(accounts.bob, DEPOSIT_MIN + 1), Ok(()));
+            assert_eq!(raffle.draw_allowed, true);
+        }
+
+        /// A user can only play once.
+        #[test]
+        fn test_play_once() {
+            let accounts =
+                ink_env::test::default_accounts::<ink_env::DefaultEnvironment>()
+                    .expect("Cannot get accounts");
+            
+            let mut raffle = Raffle::new(accounts.alice);
+            assert_eq!(raffle.participate(accounts.bob, DEPOSIT_MIN + 1), Ok(()));
+            assert_eq!(raffle.participate(accounts.bob, DEPOSIT_MIN + 1), Err(Error::EndowmentOutOfLimits));
+
         }
     }
 }
