@@ -7,8 +7,8 @@ mod raffle {
 
 
     //A user can send in anywhere between 0.01 and 0.1 tokens.
-    //const DEPOSIT_MIN: u128 = 1_000_000_000;
-    //const DEPOSIT_MAX: u128 = 10_000_000_000;
+    const DEPOSIT_MIN: u128 =  10_000_000_000_000;
+    const DEPOSIT_MAX: u128 = 100_000_000_000_000;
 
     // countdown only starts once there are at least RAFFLE_TRIGGER players in the pool
     const RAFFLE_TRIGGER: u32 = 5; 
@@ -21,10 +21,8 @@ mod raffle {
     #[derive(Debug, PartialEq, Eq, scale::Encode)]
     #[cfg_attr(feature = "std", derive(scale_info::TypeInfo))]
     pub enum Error {
-        /// Returned if not enough balance to fulfill a request is available.
-        InsufficientBalance,
-        /// Returned if not enough allowance to fulfill a request is available.
-        InsufficientAllowance,
+        /// Returned if not DEPOSIT_MIN < payment < DEPOSIT_MAX
+        EndowmentOutOfLimits,
     }
 
     /// The Raffle result type.
@@ -76,6 +74,9 @@ mod raffle {
             let dbg_msg = format!( "new participant {:#?}", participant );
             ink_env::debug_println( &dbg_msg );
 
+            if value < DEPOSIT_MIN || value > DEPOSIT_MAX {
+                return Err(Error::EndowmentOutOfLimits)
+            }
             self.participant_list.push(participant);
             self.env().emit_event(NewParticipant {
                 participant: Some(participant),
@@ -122,8 +123,11 @@ mod raffle {
                     .expect("Cannot get accounts");
             
             let mut raffle = Raffle::new(accounts.alice);
-            assert_eq!(raffle.participate(accounts.bob,1_000_000), Ok(()));
+            assert_eq!(raffle.participate(accounts.bob, DEPOSIT_MIN + 1), Ok(()));
             assert_eq!(raffle.is_participating(accounts.bob), true);
+
+            assert_eq!(raffle.participate(accounts.charlie, DEPOSIT_MIN - 1), Err(Error::EndowmentOutOfLimits));
+            assert_eq!(raffle.is_participating(accounts.charlie), false);
         }
     }
 }
