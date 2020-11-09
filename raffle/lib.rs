@@ -28,6 +28,9 @@ mod raffle {
     pub enum Error {
         /// Returned if not DEPOSIT_MIN < payment < DEPOSIT_MAX
         EndowmentOutOfLimits,
+
+        /// Returned if account already in the game
+        AlreadyParticipating,
     }
 
     /// The Raffle result type.
@@ -79,6 +82,10 @@ mod raffle {
             if value < DEPOSIT_MIN || value > DEPOSIT_MAX {
                 return Err(Error::EndowmentOutOfLimits)
             }
+            
+            if self.is_participating(participant) {
+                return Err(Error::AlreadyParticipating)
+            }
             self.participant_list.push(participant);
             self.env().emit_event(NewParticipant {
                 participant: Some(participant),
@@ -100,6 +107,19 @@ mod raffle {
             }
             false
         }
+
+        /// Check number of participants
+        #[ink(message)]
+        pub fn get_num_participants(&self) -> u16 {
+            self.participants
+        }
+
+        /// Check raffle balance
+        #[ink(message)]
+        pub fn total_balance(&self) -> u128 {
+            self.total_balance
+        }
+
     }
 
 
@@ -157,12 +177,12 @@ mod raffle {
                     .expect("Cannot get accounts");
             
             let mut raffle = Raffle::new(accounts.alice);
+            assert_eq!(raffle.participate(accounts.alice, DEPOSIT_MIN + 1), Ok(()));
             assert_eq!(raffle.participate(accounts.bob, DEPOSIT_MIN + 1), Ok(()));
-            assert_eq!(raffle.participate(accounts.bob, DEPOSIT_MIN + 1), Ok(()));
-            assert_eq!(raffle.participate(accounts.bob, DEPOSIT_MIN + 1), Ok(()));
-            assert_eq!(raffle.participate(accounts.bob, DEPOSIT_MAX - 1), Ok(()));
+            assert_eq!(raffle.participate(accounts.charlie, DEPOSIT_MIN + 1), Ok(()));
+            assert_eq!(raffle.participate(accounts.eve, DEPOSIT_MAX - 1), Ok(()));
             assert_eq!(raffle.draw_allowed, false);
-            assert_eq!(raffle.participate(accounts.bob, DEPOSIT_MIN + 1), Ok(()));
+            assert_eq!(raffle.participate(accounts.frank, DEPOSIT_MIN + 1), Ok(()));
             assert_eq!(raffle.draw_allowed, true);
         }
 
@@ -175,7 +195,7 @@ mod raffle {
             
             let mut raffle = Raffle::new(accounts.alice);
             assert_eq!(raffle.participate(accounts.bob, DEPOSIT_MIN + 1), Ok(()));
-            assert_eq!(raffle.participate(accounts.bob, DEPOSIT_MIN + 1), Err(Error::EndowmentOutOfLimits));
+            assert_eq!(raffle.participate(accounts.bob, DEPOSIT_MIN + 1), Err(Error::AlreadyParticipating));
 
         }
     }
