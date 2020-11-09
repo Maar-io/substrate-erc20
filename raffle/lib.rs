@@ -4,7 +4,12 @@ use ink_lang as ink;
 
 #[ink::contract]
 mod raffle {
-
+    use ink_storage::{
+        collections::{
+            //HashMap as inkMap,
+            Vec as InkVec,
+        }
+    };
 
     //A user can send in anywhere between 0.01 and 0.1 tokens.
     const DEPOSIT_MIN: u128 =  10_000_000_000_000;
@@ -28,9 +33,7 @@ mod raffle {
     /// The Raffle result type.
     pub type Result<T> = core::result::Result<T, Error>;
 
-    /// Defines the storage of your contract.
-    /// Add new fields to the below struct in order
-    /// to add new static storage fields to your contract.
+    /// This is the storage of Raffle contract.
     #[ink(storage)]
     #[derive()]
     pub struct Raffle {
@@ -38,10 +41,10 @@ mod raffle {
         total_balance: Balance,
         draw_allowed: bool,
         participants: u16,
-        participant_list: Vec<AccountId>,
+        participant_list: InkVec<AccountId>,
     }
 
-    /// Event emitted when a token transfer occurs.
+    /// Event emitted when new participant enters the raffle.
     #[ink(event)]
     pub struct NewParticipant {
         #[ink(topic)]
@@ -58,21 +61,20 @@ mod raffle {
                 total_balance: 0 as Balance,
                 draw_allowed: false,
                 participants: 0,
-                participant_list: Vec::new(),
+                participant_list: InkVec::new(),
              };
              instance
         }
 
         /// A message that can be called on instantiated contracts.
-        /// This one accepts ne participant
+        /// This one accepts new participant
         /// If amount is not within limits, it is rejected
         #[ink(message)]
             //let participant = self.env().caller();
         pub fn participate(&mut self, participant: AccountId, value: u128) -> Result<()>{
             
             //let participant = self.env().caller();
-            let dbg_msg = format!( "new participant {:#?}", participant );
-            ink_env::debug_println( &dbg_msg );
+            ink_env::debug_println( "New participant" );
 
             if value < DEPOSIT_MIN || value > DEPOSIT_MAX {
                 return Err(Error::EndowmentOutOfLimits)
