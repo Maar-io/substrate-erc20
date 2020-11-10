@@ -4,6 +4,7 @@ use ink_lang as ink;
 
 #[ink::contract]
 mod raffle {
+    #[cfg(not(feature = "ink-as-dependency"))]
     use ink_storage::{
         collections::{
             //HashMap as inkMap,
@@ -18,8 +19,8 @@ mod raffle {
     // countdown only starts once there are at least RAFFLE_TRIGGER players in the pool
     const RAFFLE_TRIGGER: u32 = 5; 
 
-    // The collected money from the pot is 
-    // automatically sent to a pre-defined address when the second winner is drawn.
+    /// The collected money from the pot is 
+    /// automatically sent to a pre-defined address when the second winner is drawn.
     //const SEND_POT_ADDRESS: AccountId = 0xfff;
 
     /// The Raffle error types.
@@ -43,8 +44,8 @@ mod raffle {
         owner: AccountId,
         total_balance: Balance,
         draw_allowed: bool,
-        participants: u16,
         participant_list: InkVec<AccountId>,
+        winner_list: InkVec<AccountId>,
     }
 
     /// Event emitted when new participant enters the raffle.
@@ -56,6 +57,16 @@ mod raffle {
         value: Balance,
     }
 
+    /// Event emitted when a winner is drawn.
+    #[ink(event)]
+    pub struct RaffleWinner {
+        #[ink(topic)]
+        participant: Option<AccountId>,
+        #[ink(topic)]
+        index: u32,
+    }
+    
+
     impl Raffle {
         #[ink(constructor)]
         pub fn new(owner: AccountId) -> Self {
@@ -63,8 +74,8 @@ mod raffle {
                 owner,
                 total_balance: 0 as Balance,
                 draw_allowed: false,
-                participants: 0,
                 participant_list: InkVec::new(),
+                winner_list: InkVec::new(),
              };
              instance
         }
@@ -87,6 +98,7 @@ mod raffle {
                 return Err(Error::AlreadyParticipating)
             }
             self.participant_list.push(participant);
+            self.total_balance += value;
             self.env().emit_event(NewParticipant {
                 participant: Some(participant),
                 value,
@@ -108,23 +120,54 @@ mod raffle {
             false
         }
 
+        /// Draw winner
+        #[ink(message)]
+        pub fn draw_winner(&mut self) -> Result<()> {
+            let winner_index: u32 = self.get_random_index();
+            let winner = *self.participant_list.get(winner_index).unwrap();
+            self.winner_list.push(winner);
+            self.env().emit_event(RaffleWinner { participant: Some(winner), index: winner_index });
+            Ok(())
+        }
+        
+        fn get_random_index(&self) -> u32 {
+            let random_index: u32 = Self::get_random_number();
+            random_index % self.participant_list.len()
+        }
+        
+        
         /// Check number of participants
         #[ink(message)]
-        pub fn get_num_participants(&self) -> u16 {
-            self.participants
+        pub fn get_num_participants(&self) -> u32 {
+            self.participant_list.len() 
         }
-
+        
         /// Check raffle balance
         #[ink(message)]
         pub fn total_balance(&self) -> u128 {
             self.total_balance
         }
-
+        
+        // Thanks to @LaurentTrk#4763 on discord for get_random_number()
+        // I wouldn't make on time without this
+        // It is up to polkadot-hello-world-jury to decide if my submission is legit
+        fn get_random_number() -> u32 {
+            let seed: [u8; 8] = [7, 8, 9, 10, 11, 12, 13, 14];
+            let random_hash = Self::env().random(&seed);
+            Self::as_u32_be(&random_hash.as_ref())
+        }
+        fn as_u32_be(arr: &[u8]) -> u32 {
+            ((arr[0] as u32) << 24)
+                + ((arr[1] as u32) << 16)
+                + ((arr[2] as u32) << 8)
+                + ((arr[3] as u32) << 0)
+        }
     }
 
 
     #[cfg(test)]
     mod tests {
+        use ink_lang as ink;
         use super::*;
 
         /// We test if the default constructor does its job.
@@ -134,7 +177,7 @@ mod raffle {
                 ink_env::test::default_accounts::<ink_env::DefaultEnvironment>()
                     .expect("Cannot get accounts");
             let raffle = Raffle::new(accounts.alice);
-            assert_eq!(raffle.participants, 0);
+            assert_eq!(raffle.get_num_participants(), 0);
         }
 
         /// We test a simple use case of our contract.
@@ -170,8 +213,8 @@ mod raffle {
         }
 
         /// 15 minute countdown only starts once there are at least 5 players in the pool.
-        #[test]
-        fn test_enable_draw() {
+        #[ink::test]
+        fn test_draw() {
             let accounts =
                 ink_env::test::default_accounts::<ink_env::DefaultEnvironment>()
                     .expect("Cannot get accounts");
@@ -184,6 +227,12 @@ mod raffle {
             assert_eq!(raffle.draw_allowed, false);
             assert_eq!(raffle.participate(accounts.frank, DEPOSIT_MIN + 1), Ok(()));
             assert_eq!(raffle.draw_allowed, true);
+
+            assert_eq!(raffle.draw_winner(), Ok(()));
+
+            // Expect 5 newParticipant events and one draw
+            let emitted_events = ink_env::test::recorded_events().collect::<Vec<_>>();
+            assert_eq!(emitted_events.len(), 6);
         }
 
         /// A user can only play once.
