@@ -7,7 +7,6 @@ mod raffle {
     #[cfg(not(feature = "ink-as-dependency"))]
     use ink_storage::{
         collections::{
-            //HashMap as inkMap,
             Vec as InkVec,
         }
     };
@@ -19,9 +18,8 @@ mod raffle {
     // countdown only starts once there are at least RAFFLE_TRIGGER players in the pool
     const RAFFLE_TRIGGER: u32 = 5; 
 
-    /// The collected money from the pot is 
-    /// automatically sent to a pre-defined address when the second winner is drawn.
-    //const SEND_POT_ADDRESS: AccountId = 0xfff;
+    /// Number of rafflr winners
+    const RAFFLE_WINNERS: u8 = 2;
 
     /// The Raffle error types.
     #[derive(Debug, PartialEq, Eq, scale::Encode)]
@@ -32,6 +30,15 @@ mod raffle {
 
         /// Returned if account already in the game
         AlreadyParticipating,
+
+        /// Returned if we have 2 winners
+        RaffleFinished,
+
+        /// Pot Transfer failed
+        TransferError,
+
+        /// Raffle does not have enough participants
+        TooFewParticpants,
     }
 
     /// The Raffle result type.
@@ -41,9 +48,10 @@ mod raffle {
     #[ink(storage)]
     #[derive()]
     pub struct Raffle {
-        owner: AccountId,
+        pot_receiver: AccountId,
         total_balance: Balance,
         draw_allowed: bool,
+        raffle_finished: bool,
         participant_list: InkVec<AccountId>,
         winner_list: InkVec<AccountId>,
     }
@@ -65,15 +73,15 @@ mod raffle {
         #[ink(topic)]
         index: u32,
     }
-    
 
     impl Raffle {
         #[ink(constructor)]
-        pub fn new(owner: AccountId) -> Self {
+        pub fn new(pot_receiver: AccountId) -> Self {
             let instance = Self { 
-                owner,
+                pot_receiver,
                 total_balance: 0 as Balance,
                 draw_allowed: false,
+                raffle_finished: false,
                 participant_list: InkVec::new(),
                 winner_list: InkVec::new(),
              };
@@ -94,6 +102,10 @@ mod raffle {
                 return Err(Error::EndowmentOutOfLimits)
             }
             
+            if self.raffle_finished {
+                return Err(Error::RaffleFinished)
+            }
+
             if self.is_participating(participant) {
                 return Err(Error::AlreadyParticipating)
             }
@@ -123,13 +135,36 @@ mod raffle {
         /// Draw winner
         #[ink(message)]
         pub fn draw_winner(&mut self) -> Result<()> {
+            if self.raffle_finished{
+                return Err(Error::RaffleFinished)
+            }
+            if !self.draw_allowed{
+                return Err(Error::TooFewParticpants)
+            }
             let winner_index: u32 = self.get_random_index();
             let winner = *self.participant_list.get(winner_index).unwrap();
+            
             self.winner_list.push(winner);
+            if self.winner_list.len() == RAFFLE_WINNERS as u32 {
+                let result = self.close_raffle();
+                if result {
+                    return Err(Error::TransferError);
+                }
+            }
             self.env().emit_event(RaffleWinner { participant: Some(winner), index: winner_index });
             Ok(())
         }
         
+        fn close_raffle(&mut self) -> bool{
+            self.raffle_finished = true;
+            let result = self.env().transfer(self.pot_receiver, self.total_balance);
+
+            if result == Ok(()) {
+                return true;
+            }
+            false
+        }
+
         fn get_random_index(&self) -> u32 {
             let random_index: u32 = Self::get_random_number();
             random_index % self.participant_list.len()
@@ -210,6 +245,9 @@ mod raffle {
 
             assert_eq!(raffle.participate(accounts.charlie, DEPOSIT_MAX + 1), Err(Error::EndowmentOutOfLimits));
             assert_eq!(raffle.is_participating(accounts.charlie), false);
+
+            assert_eq!(raffle.participate(accounts.charlie, DEPOSIT_MIN), Ok(()));
+            assert_eq!(raffle.is_participating(accounts.charlie), true);
         }
 
         /// 15 minute countdown only starts once there are at least 5 players in the pool.
@@ -219,20 +257,31 @@ mod raffle {
                 ink_env::test::default_accounts::<ink_env::DefaultEnvironment>()
                     .expect("Cannot get accounts");
             
-            let mut raffle = Raffle::new(accounts.alice);
-            assert_eq!(raffle.participate(accounts.alice, DEPOSIT_MIN + 1), Ok(()));
-            assert_eq!(raffle.participate(accounts.bob, DEPOSIT_MIN + 1), Ok(()));
-            assert_eq!(raffle.participate(accounts.charlie, DEPOSIT_MIN + 1), Ok(()));
-            assert_eq!(raffle.participate(accounts.eve, DEPOSIT_MAX - 1), Ok(()));
-            assert_eq!(raffle.draw_allowed, false);
-            assert_eq!(raffle.participate(accounts.frank, DEPOSIT_MIN + 1), Ok(()));
-            assert_eq!(raffle.draw_allowed, true);
+            let mut raffle = Raffle::new(accounts.charlie);
+            set_all_participants(&mut raffle);
 
             assert_eq!(raffle.draw_winner(), Ok(()));
+            assert_eq!(raffle.draw_winner(), Ok(()));
 
-            // Expect 5 newParticipant events and one draw
+            // Expect events: 5 NewParticipant events, 2 RaffleWinner,
             let emitted_events = ink_env::test::recorded_events().collect::<Vec<_>>();
-            assert_eq!(emitted_events.len(), 6);
+            assert_eq!(emitted_events.len(), 7);
+        }
+
+        // 15 minute countdown only starts once there are at least 5 players in the pool.
+        #[ink::test]
+        fn test_draw_not_enough_participants() {
+            let accounts =
+                ink_env::test::default_accounts::<ink_env::DefaultEnvironment>()
+                    .expect("Cannot get accounts");
+            
+            let mut raffle = Raffle::new(accounts.charlie);
+            assert_eq!(raffle.participate(accounts.bob, DEPOSIT_MIN + 1), Ok(()));
+            assert_eq!(raffle.draw_winner(), Err(Error::TooFewParticpants));
+
+            // Expect events: 1 NewParticipant event
+            let emitted_events = ink_env::test::recorded_events().collect::<Vec<_>>();
+            assert_eq!(emitted_events.len(), 1);
         }
 
         /// A user can only play once.
@@ -242,10 +291,23 @@ mod raffle {
                 ink_env::test::default_accounts::<ink_env::DefaultEnvironment>()
                     .expect("Cannot get accounts");
             
-            let mut raffle = Raffle::new(accounts.alice);
+            let mut raffle = Raffle::new(accounts.charlie);
             assert_eq!(raffle.participate(accounts.bob, DEPOSIT_MIN + 1), Ok(()));
             assert_eq!(raffle.participate(accounts.bob, DEPOSIT_MIN + 1), Err(Error::AlreadyParticipating));
 
+        }
+
+        fn set_all_participants(raffle: &mut Raffle) {
+            let accounts =
+                ink_env::test::default_accounts::<ink_env::DefaultEnvironment>()
+                    .expect("Cannot get accounts");
+            assert_eq!(raffle.participate(accounts.alice, DEPOSIT_MIN + 1), Ok(()));
+            assert_eq!(raffle.participate(accounts.bob, DEPOSIT_MIN + 1), Ok(()));
+            assert_eq!(raffle.participate(accounts.charlie, DEPOSIT_MIN + 1), Ok(()));
+            assert_eq!(raffle.participate(accounts.eve, DEPOSIT_MAX - 1), Ok(()));
+            assert_eq!(raffle.draw_allowed, false);
+            assert_eq!(raffle.participate(accounts.frank, DEPOSIT_MIN + 1), Ok(()));
+            assert_eq!(raffle.draw_allowed, true);
         }
     }
 }
