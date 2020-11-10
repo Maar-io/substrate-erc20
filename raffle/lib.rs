@@ -91,12 +91,12 @@ mod raffle {
         /// A message that can be called on instantiated contracts.
         /// This one accepts new participant
         /// If amount is not within limits, it is rejected
-        #[ink(message)]
-            //let participant = self.env().caller();
-        pub fn participate(&mut self, participant: AccountId, value: u128) -> Result<()>{
+        #[ink(message, payable)]
+        pub fn participate(&mut self, participant: AccountId) -> Result<()>{
             
-            //let participant = self.env().caller();
-            ink_env::debug_println( "New participant" );
+            // self.env().caller() can be anyone willing to pay. 
+            // contract stores entered participant address
+            let value = self.env().transferred_balance();
 
             if value < DEPOSIT_MIN || value > DEPOSIT_MAX {
                 return Err(Error::EndowmentOutOfLimits)
@@ -109,6 +109,7 @@ mod raffle {
             if self.is_participating(participant) {
                 return Err(Error::AlreadyParticipating)
             }
+
             self.participant_list.push(participant);
             self.total_balance += value;
             self.env().emit_event(NewParticipant {
@@ -154,6 +155,7 @@ mod raffle {
             self.env().emit_event(RaffleWinner { participant: Some(winner), index: winner_index });
             Ok(())
         }
+        
         
         fn close_raffle(&mut self) -> bool{
             self.raffle_finished = true;
@@ -216,21 +218,22 @@ mod raffle {
         }
 
         /// We test a simple use case of our contract.
-        #[test]
+        #[ink::test]
         fn test_participate() {
             let accounts =
                 ink_env::test::default_accounts::<ink_env::DefaultEnvironment>()
                     .expect("Cannot get accounts");
             
             let mut raffle = Raffle::new(accounts.alice);
-            assert_eq!(raffle.participate(accounts.bob, DEPOSIT_MIN + 1), Ok(()));
+            do_transfer(accounts.bob, None);
+            assert_eq!(raffle.participate(accounts.bob), Ok(()));
             assert_eq!(raffle.is_participating(accounts.bob), true);
 
             // Expect one emitted event:
             let emitted_events = ink_env::test::recorded_events().collect::<Vec<_>>();
             assert_eq!(emitted_events.len(), 1);
         }
-
+/*
         /// A user can send in anywhere between 0.01 and 0.1 tokens.
         #[test]
         fn test_endowment() {
@@ -309,5 +312,23 @@ mod raffle {
             assert_eq!(raffle.participate(accounts.frank, DEPOSIT_MIN + 1), Ok(()));
             assert_eq!(raffle.draw_allowed, true);
         }
+*/
+        fn do_transfer(caller: AccountId, amount: Option<Balance>){
+            // Get contract address.
+            let callee = ink_env::account_id::<ink_env::DefaultEnvironment>()
+                .unwrap_or([0x0; 32].into());
+            let mut data =
+                ink_env::test::CallData::new(ink_env::call::Selector::new([0x00; 4])); // balance_of
+            data.push_arg(&caller);
+            // Push the new execution context.
+            ink_env::test::push_execution_context::<ink_env::DefaultEnvironment>(
+                caller,
+                callee,
+                1000000,
+                amount.unwrap_or(DEPOSIT_MIN),
+                data,
+            );
+        }
+            
     }
 }
