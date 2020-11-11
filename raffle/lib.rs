@@ -21,6 +21,10 @@ mod raffle {
     /// Number of rafflr winners
     const RAFFLE_WINNERS: u8 = 2;
 
+    /// Duration before draw is enabled 15min x 60sec x 1000ms
+    //const DURATION_IN_MS: u64 = 900000;
+
+
     /// The Raffle error types.
     #[derive(Debug, PartialEq, Eq, scale::Encode)]
     #[cfg_attr(feature = "std", derive(scale_info::TypeInfo))]
@@ -124,8 +128,7 @@ mod raffle {
         }
 
         /// Check if account already paid... test only
-        #[ink(message)]
-        pub fn is_participating(&self, account: AccountId ) -> bool {
+        fn is_participating(&self, account: AccountId ) -> bool {
             for a in self.participant_list.iter(){
                 if a == &account{
                     return true
@@ -173,7 +176,7 @@ mod raffle {
         
         /// Check number of participants
         #[ink(message)]
-        pub fn get_num_participants(&self) -> u32 {
+        pub fn participants(&self) -> u32 {
             self.participant_list.len() 
         }
         
@@ -185,11 +188,17 @@ mod raffle {
 
         /// Winner list
         #[ink(message)]
-        pub fn announce_winners(&self) -> (Option<AccountId>, Option<AccountId>) {
+        pub fn winner_address(&self) -> (Option<AccountId>, Option<AccountId>) {
             (
                 self.winner_list.first().map(|v| v.clone()),
                 self.winner_list.last().map(|v| v.clone()),
             )
+        }
+
+        /// Winner count
+        #[ink(message)]
+        pub fn winners(&self) -> u32{
+                return self.winner_list.len();
         }
         
         // Thanks to @LaurentTrk#4763 on discord for get_random_number()
@@ -221,7 +230,7 @@ mod raffle {
                 ink_env::test::default_accounts::<ink_env::DefaultEnvironment>()
                     .expect("Cannot get accounts");
             let raffle = Raffle::new(accounts.alice);
-            assert_eq!(raffle.get_num_participants(), 0);
+            assert_eq!(raffle.participants(), 0);
             assert_eq!(raffle.pot_receiver, accounts.alice);
         }
 
@@ -335,7 +344,7 @@ mod raffle {
             assert_eq!(raffle.participate(accounts.frank), Ok(()));
             //assert_eq!(raffle.draw_allowed, false);
         }
-        
+
         fn do_transfer(caller: AccountId, amount: Option<Balance>){
             
             // Get contract address.
