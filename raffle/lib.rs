@@ -77,11 +77,18 @@ mod raffle {
     #[ink(event)]
     pub struct RaffleWinner {
         #[ink(topic)]
-        participant: Option<AccountId>,
+        winner: Option<AccountId>,
         #[ink(topic)]
         index: u32,
     }
 
+    /// Event emitted when a winner is drawn.
+    #[ink(event)]
+    pub struct RaffleOpen {
+        #[ink(topic)]
+        time_remaining: u64,
+    }
+    
     impl Raffle {
         #[ink(constructor)]
         pub fn new(pot_receiver: AccountId) -> Self {
@@ -166,16 +173,17 @@ mod raffle {
                     return Err(Error::TransferError);
                 }
             }
-            self.env().emit_event(RaffleWinner { participant: Some(winner), index: winner_index });
+            self.env().emit_event(RaffleWinner { winner: Some(winner), index: winner_index });
             Ok(())
         }  
         
         fn countdown_ongoing(&self) -> bool{
-            let block_time = Self::env().block_timestamp();
-            if (block_time - self.start_time) > DURATION_IN_MS{
-                return false;
+            let time_diff = Self::env().block_timestamp() - self.start_time;
+            if time_diff < DURATION_IN_MS{
+                self.env().emit_event(RaffleOpen {time_remaining: time_diff });
+                return true;
             }
-            true
+            false
         }
 
         fn transfer_pot(&mut self) -> bool{
