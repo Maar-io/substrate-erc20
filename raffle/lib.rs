@@ -16,13 +16,13 @@ mod raffle {
     const DEPOSIT_MAX: u128 = 100_000_000_000_000;
 
     // countdown only starts once there are at least RAFFLE_TRIGGER players in the pool
-    const RAFFLE_TRIGGER: u32 = 3; 
+    const RAFFLE_TRIGGER: u32 = 5; 
 
     /// Number of rafflr winners
     const RAFFLE_WINNERS: u8 = 2;
 
     /// Duration before draw is enabled 15min x 60sec x 1000ms
-    //const DURATION_IN_MS: u64 = 900000;
+    const DURATION_IN_MS: u64 = 900000;
 
 
     /// The Raffle error types.
@@ -43,6 +43,9 @@ mod raffle {
 
         /// Raffle does not have enough participants
         TooFewParticpants,
+
+        /// Raffle time countdown not finished
+        RaffleStillOpen,
     }
 
     /// The Raffle result type.
@@ -54,10 +57,11 @@ mod raffle {
     pub struct Raffle {
         pot_receiver: AccountId,
         total_balance: Balance,
-        draw_allowed: bool,
+        enough_participants: bool,
         raffle_finished: bool,
         participant_list: InkVec<AccountId>,
         winner_list: InkVec<AccountId>,
+        start_time: u64,
     }
 
     /// Event emitted when new participant enters the raffle.
@@ -84,10 +88,11 @@ mod raffle {
             let instance = Self { 
                 pot_receiver,
                 total_balance: 0 as Balance,
-                draw_allowed: false,
+                enough_participants: false,
                 raffle_finished: false,
                 participant_list: InkVec::new(),
                 winner_list: InkVec::new(),
+                start_time:  0,
              };
              instance
         }
@@ -103,7 +108,7 @@ mod raffle {
             let value = self.env().transferred_balance();
 
             ink_env::debug_println( "New participant");
-
+            
             if value < DEPOSIT_MIN || value > DEPOSIT_MAX {
                 return Err(Error::EndowmentOutOfLimits)
             }
@@ -111,7 +116,7 @@ mod raffle {
             if self.raffle_finished {
                 return Err(Error::RaffleFinished)
             }
-
+            
             if self.is_participating(participant) {
                 return Err(Error::AlreadyParticipating)
             }
@@ -121,8 +126,9 @@ mod raffle {
                 participant: Some(participant),
                 value,
             });
-            if self.participant_list.len() as u32 >= RAFFLE_TRIGGER{
-                self.draw_allowed = true;
+            if self.participant_list.len() as u32 == RAFFLE_TRIGGER{
+                self.enough_participants = true;
+                self.start_time = Self::env().block_timestamp();
             }
             Ok(())
         }
@@ -143,8 +149,11 @@ mod raffle {
             if self.raffle_finished{
                 return Err(Error::RaffleFinished)
             }
-            if !self.draw_allowed{
+            if !self.enough_participants{
                 return Err(Error::TooFewParticpants)
+            }
+            if self.countdown_ongoing(){
+                return Err(Error::RaffleStillOpen)
             }
             let winner_index: u32 = self.get_random_index();
             let winner = *self.participant_list.get(winner_index).unwrap();
@@ -161,6 +170,14 @@ mod raffle {
             Ok(())
         }  
         
+        fn countdown_ongoing(&self) -> bool{
+            let block_time = Self::env().block_timestamp();
+            if (block_time - self.start_time) > DURATION_IN_MS{
+                return false;
+            }
+            true
+        }
+
         fn transfer_pot(&mut self) -> bool{
             let result = self.env().transfer(self.pot_receiver, self.total_balance);
             if result == Ok(()) {
@@ -199,6 +216,12 @@ mod raffle {
         #[ink(message)]
         pub fn winners(&self) -> u32{
                 return self.winner_list.len();
+        }
+
+        /// Is Raffle over?
+        #[ink(message)]
+        pub fn finished(&self) -> bool{
+                return self.raffle_finished;
         }
         
         // Thanks to @LaurentTrk#4763 on discord for get_random_number()
@@ -282,14 +305,20 @@ mod raffle {
             let mut raffle = Raffle::new(accounts.charlie);
             set_all_participants(&mut raffle);
 
-            assert_eq!(raffle.draw_winner(), Ok(()));
-            assert_eq!(raffle.winner_list.len(), 1);
-            //do_transfer(accounts.alice, None);
+            // Draw fails since countdown just started
+            // assert_eq!(raffle.draw_winner(), Err(Error::RaffleStillOpen));
+            // assert_ne!(raffle.start_time, 0);
+
+            // fake the time pass. Move it in time backwards
+            // raffle.start_time -= DURATION_IN_MS * 2;
+            // assert_eq!(raffle.draw_winner(), Ok(()));
+            // assert_eq!(raffle.winner_list.len(), 1);
+
             //assert_eq!(raffle.draw_winner(), Ok(()));
 
-            // Expect events: 5 NewParticipant events, 1 RaffleWinner,
+            // Expect events: 5 NewParticipant events, 0 RaffleWinner,
             let emitted_events = ink_env::test::recorded_events().collect::<Vec<_>>();
-            assert_eq!(emitted_events.len(), 6);
+            assert_eq!(emitted_events.len(), 5);
         }
 
         /// There are at least 5 players in the pool.
@@ -339,10 +368,13 @@ mod raffle {
             assert_eq!(raffle.participate(accounts.charlie), Ok(()));
             do_transfer(accounts.eve, None);
             assert_eq!(raffle.participate(accounts.eve), Ok(()));
-            //assert_eq!(raffle.draw_allowed, false);
+
+            assert_eq!(raffle.enough_participants, false);
+
             do_transfer(accounts.frank, None);
             assert_eq!(raffle.participate(accounts.frank), Ok(()));
-            //assert_eq!(raffle.draw_allowed, false);
+
+            assert_eq!(raffle.enough_participants, true);
         }
 
         fn do_transfer(caller: AccountId, amount: Option<Balance>){
