@@ -58,9 +58,9 @@ mod raffle {
         pot_receiver: AccountId,
         total_balance: Balance,
         enough_participants: bool,
-        raffle_finished: bool,
+        winners: u8,
         participant_list: InkVec<AccountId>,
-        winner_list: InkVec<AccountId>,
+        winner_list: [Option<AccountId>; RAFFLE_WINNERS as usize],
         start_time: u64,
     }
 
@@ -96,9 +96,9 @@ mod raffle {
                 pot_receiver,
                 total_balance: 0 as Balance,
                 enough_participants: false,
-                raffle_finished: false,
+                winners: 0,
                 participant_list: InkVec::new(),
-                winner_list: InkVec::new(),
+                winner_list: [None, None],
                 start_time:  0,
              };
              instance
@@ -120,7 +120,7 @@ mod raffle {
                 return Err(Error::EndowmentOutOfLimits)
             }
             
-            if self.raffle_finished {
+            if self.winners == RAFFLE_WINNERS {
                 return Err(Error::RaffleFinished)
             }
             
@@ -153,7 +153,7 @@ mod raffle {
         /// Draw winner
         #[ink(message)]
         pub fn draw_winner(&mut self) -> Result<()> {
-            if self.raffle_finished{
+            if self.winners == RAFFLE_WINNERS{
                 return Err(Error::RaffleFinished)
             }
             if !self.enough_participants{
@@ -165,9 +165,9 @@ mod raffle {
             let winner_index: u32 = self.get_random_index();
             let winner = *self.participant_list.get(winner_index).unwrap();
             
-            self.winner_list.push(winner);
-            if self.winner_list.len() == RAFFLE_WINNERS as u32 {
-                self.raffle_finished = true;
+            self.winner_list[self.winners as usize] = Some(winner);
+            self.winners += 1;
+            if self.winners == RAFFLE_WINNERS {
                 let result = self.transfer_pot();
                 if !result {
                     return Err(Error::TransferError);
@@ -213,23 +213,14 @@ mod raffle {
 
         /// Winner list
         #[ink(message)]
-        pub fn winner_address(&self) -> (Option<AccountId>, Option<AccountId>) {
-            (
-                self.winner_list.first().map(|v| v.clone()),
-                self.winner_list.last().map(|v| v.clone()),
-            )
-        }
-
-        /// Winner count
-        #[ink(message)]
-        pub fn winners(&self) -> u32{
-                return self.winner_list.len();
+        pub fn winner_address(&self) -> [Option<AccountId>; RAFFLE_WINNERS as usize] {
+            self.winner_list
         }
 
         /// Is Raffle over?
         #[ink(message)]
         pub fn finished(&self) -> bool{
-                return self.raffle_finished;
+            self.winners == RAFFLE_WINNERS
         }
         
         // Thanks to @LaurentTrk#4763 on discord for get_random_number()
@@ -339,8 +330,7 @@ mod raffle {
             let mut raffle = Raffle::new(accounts.charlie);
             do_transfer(accounts.alice, None);
             assert_eq!(raffle.participate(accounts.alice), Ok(()));
-    
-            assert_eq!(raffle.draw_winner(), Err(Error::TooFewParticpants));
+            assert_eq!(raffle.winners, 0);
 
             // Expect events: 1 NewParticipant event
             let emitted_events = ink_env::test::recorded_events().collect::<Vec<_>>();
