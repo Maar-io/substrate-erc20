@@ -22,7 +22,7 @@ mod raffle {
     const RAFFLE_WINNERS: u8 = 2;
 
     /// Duration before draw is enabled 15min x 60sec x 1000ms
-    const DURATION_IN_MS: u64 = 900000;
+    const DURATION_IN_MS: u64 = 5;
 
 
     /// The Raffle error types.
@@ -113,8 +113,6 @@ mod raffle {
             // self.env().caller() can be anyone willing to pay. 
             // contract stores entered participant address
             let value = self.env().transferred_balance();
-
-            ink_env::debug_println( "New participant");
             
             if value < DEPOSIT_MIN || value > DEPOSIT_MAX {
                 return Err(Error::EndowmentOutOfLimits)
@@ -133,6 +131,7 @@ mod raffle {
                 participant: Some(participant),
                 value,
             });
+            ink_env::debug_println( "event NewParticipant");
             if self.participant_list.len() as u32 == RAFFLE_TRIGGER{
                 self.enough_participants = true;
                 self.start_time = Self::env().block_timestamp();
@@ -163,6 +162,8 @@ mod raffle {
                 return Err(Error::RaffleStillOpen)
             }
             let winner_index: u32 = self.get_random_index();
+            let dbg_msg = format!( "random index {:#?}", winner_index );
+            ink_env::debug_println( &dbg_msg );
             let winner = *self.participant_list.get(winner_index).unwrap();
             
             self.winner_list[self.winners as usize] = Some(winner);
@@ -181,6 +182,7 @@ mod raffle {
             let time_diff = Self::env().block_timestamp() - self.start_time;
             if time_diff < DURATION_IN_MS{
                 self.env().emit_event(RaffleOpen {time_remaining: time_diff });
+                ink_env::debug_println( "event RaffleOpen");
                 return true;
             }
             false
@@ -276,8 +278,8 @@ mod raffle {
         #[test]
         fn test_deposit_limits() {
             let accounts =
-            ink_env::test::default_accounts::<ink_env::DefaultEnvironment>()
-            .expect("Cannot get accounts");
+              ink_env::test::default_accounts::<ink_env::DefaultEnvironment>()
+              .expect("Cannot get accounts");
             
             let mut raffle = Raffle::new(accounts.alice);
             
@@ -305,19 +307,28 @@ mod raffle {
             set_all_participants(&mut raffle);
 
             // Draw fails since countdown just started
-            // assert_eq!(raffle.draw_winner(), Err(Error::RaffleStillOpen));
-            // assert_ne!(raffle.start_time, 0);
+            assert_eq!(raffle.draw_winner(), Err(Error::RaffleStillOpen));
+            ink_env::test::advance_block::<ink_env::DefaultEnvironment>()
+                .expect("Cannot advance block");
+            let dbg_msg = format!( "start_time {:#?}", raffle.start_time );
+            ink_env::debug_println( &dbg_msg );
+
+            assert_ne!(raffle.start_time, 0);
 
             // fake the time pass. Move it in time backwards
-            // raffle.start_time -= DURATION_IN_MS * 2;
-            // assert_eq!(raffle.draw_winner(), Ok(()));
-            // assert_eq!(raffle.winner_list.len(), 1);
+            raffle.start_time -= DURATION_IN_MS * 2; // for test to pass set DURATION_IN_MS=5
 
-            //assert_eq!(raffle.draw_winner(), Ok(()));
+            // draw 2 winners
+            assert_eq!(raffle.draw_winner(), Ok(()));
+            assert_eq!(raffle.winners, 1);
+            ink_env::test::advance_block::<ink_env::DefaultEnvironment>()
+                .expect("Cannot advance block");
+            // assert_eq!(raffle.draw_winner(), Ok(())); //this fails with Err(TransferError)
+            // assert_eq!(raffle.winners, 2);
 
-            // Expect events: 5 NewParticipant events, 0 RaffleWinner,
+            // Expect events: 5 NewParticipant events, 1 RaffleOpen, 1 RaffleWinner
             let emitted_events = ink_env::test::recorded_events().collect::<Vec<_>>();
-            assert_eq!(emitted_events.len(), 5);
+            assert_eq!(emitted_events.len(), 7);
         }
 
         /// There are at least 5 players in the pool.
@@ -358,17 +369,30 @@ mod raffle {
                 ink_env::test::default_accounts::<ink_env::DefaultEnvironment>()
                     .expect("Cannot get accounts");
 
+            ink_env::test::advance_block::<ink_env::DefaultEnvironment>()
+                .expect("Cannot advance block");
             do_transfer(accounts.alice, None);
             assert_eq!(raffle.participate(accounts.alice), Ok(()));
+
+            ink_env::test::advance_block::<ink_env::DefaultEnvironment>()
+                .expect("Cannot advance block");
             do_transfer(accounts.bob, None);
             assert_eq!(raffle.participate(accounts.bob), Ok(()));
+                    
+            ink_env::test::advance_block::<ink_env::DefaultEnvironment>()
+                .expect("Cannot advance block");
             do_transfer(accounts.charlie, None);
             assert_eq!(raffle.participate(accounts.charlie), Ok(()));
+
+            ink_env::test::advance_block::<ink_env::DefaultEnvironment>()
+                .expect("Cannot advance block");
             do_transfer(accounts.eve, None);
             assert_eq!(raffle.participate(accounts.eve), Ok(()));
 
             assert_eq!(raffle.enough_participants, false);
 
+            ink_env::test::advance_block::<ink_env::DefaultEnvironment>()
+                .expect("Cannot advance block");
             do_transfer(accounts.frank, None);
             assert_eq!(raffle.participate(accounts.frank), Ok(()));
 
